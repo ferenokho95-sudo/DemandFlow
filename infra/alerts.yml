@@ -1,0 +1,23 @@
+groups:
+  - name: demandflow
+    rules:
+      - alert: DemandFlowAPIUnavailable
+        expr: up{job="demandflow"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: 'DemandFlow API is unavailable'}
+      - alert: DemandFlowPipelineFailed
+        expr: demandflow_last_run_success == 0
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: 'Latest pipeline did not succeed'}
+      - alert: DemandFlowQualityAlert
+        expr: demandflow_alerts > 0 or demandflow_data_age_days > 2
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: 'Stale data or realized forecast error above threshold'}
+      - alert: DemandFlowScheduleOverdue
+        expr: time() - demandflow_last_success_timestamp_seconds > 93600
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'No successful pipeline for more than 26 hours'}

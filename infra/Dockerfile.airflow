@@ -1,0 +1,5 @@
+FROM apache/airflow:2.10.5-python3.11
+COPY requirements*.txt /tmp/deps/
+RUN pip install --no-cache-dir "apache-airflow==2.10.5" -r /tmp/deps/requirements-full.txt
+COPY demandflow /opt/airflow/demandflow
+ENV PYTHONPATH=/opt/airflow

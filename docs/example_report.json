@@ -1,0 +1,27 @@
+{
+  "run_id": "239cc10d180f42f5bbfa55d99c74b0e5",
+  "model": "ridge",
+  "horizon": 14,
+  "rows": 2880,
+  "products": 12,
+  "last_date": "2026-10-28",
+  "data_sha256": "601d343b3a66d090f06c2f88b9a6214fc92c6ae681609c9415d1f84db1b36029",
+  "validation": {
+    "ridge": {
+      "mae": 2.5827185201837635,
+      "wape": 0.03912856987923819
+    },
+    "seasonal_naive": {
+      "mae": 3.494047619047619,
+      "wape": 0.0529353413292452
+    }
+  },
+  "realized": {
+    "matched": 0,
+    "mae": null,
+    "wape": null
+  },
+  "data_age_days": 1,
+  "alerts": [],
+  "duration_seconds": 0.3311578399998325
+}

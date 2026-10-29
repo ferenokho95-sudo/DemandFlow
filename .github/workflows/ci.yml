@@ -1,0 +1,20 @@
+name: test-and-build
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - run: docker compose config --quiet
+      - run: docker compose --profile jobs build
+      - run: docker compose up -d
+      - run: docker compose run --rm pipeline
+      - run: curl --fail --retry 12 --retry-delay 5 --retry-all-errors http://127.0.0.1:8000/ready
+      - if: always()
+        run: docker compose logs --tail 60
+      - if: always()
+        run: docker compose down

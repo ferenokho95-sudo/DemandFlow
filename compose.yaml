@@ -1,0 +1,115 @@
+name: demandflow
+x-env: &env
+  DEMANDFLOW_HOME: /state
+  DWH_URL: postgresql+psycopg2://demand:${POSTGRES_PASSWORD:-demand_local}@postgres:5432/demand
+  CLICKHOUSE_HOST: clickhouse
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-click_local}
+  S3_ENDPOINT_URL: http://minio:9000
+  AWS_ACCESS_KEY_ID: ${MINIO_USER:-demandflow}
+  AWS_SECRET_ACCESS_KEY: ${MINIO_PASSWORD:-demandflow_local}
+  AWS_DEFAULT_REGION: us-east-1
+  MLFLOW_TRACKING_URI: http://mlflow:5000
+x-ready: &ready
+  postgres: {condition: service_healthy}
+  clickhouse: {condition: service_healthy}
+  minio: {condition: service_healthy}
+  mlflow: {condition: service_healthy}
+x-airflow: &airflow
+  build: {context: ., dockerfile: infra/Dockerfile.airflow}
+  environment: &airflow-env
+    <<: *env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://demand:${POSTGRES_PASSWORD:-demand_local}@postgres:5432/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__WEBSERVER__WORKERS: '2'
+    AIRFLOW__WEBSERVER__SECRET_KEY: local-demo-only-change-before-sharing
+  user: '50000:0'
+  volumes: [state:/state, './data:/data:ro', './dags:/opt/airflow/dags:ro', 'airflow_logs:/opt/airflow/logs']
+services:
+  state-init:
+    image: busybox:1.37.0
+    user: root
+    volumes: [state:/state]
+    command: [sh, -c, 'chown 50000:0 /state && chmod 2775 /state']
+  postgres:
+    image: postgres:16.8
+    environment:
+      POSTGRES_USER: demand
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-demand_local}
+      POSTGRES_DB: demand
+    volumes: [pgdata:/var/lib/postgresql/data, './infra/init.sql:/docker-entrypoint-initdb.d/init.sql:ro']
+    healthcheck: {test: [CMD-SHELL, 'pg_isready -U demand -d demand'], interval: 5s, timeout: 5s, retries: 30}
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8.14.39
+    environment:
+      CLICKHOUSE_USER: demand
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-click_local}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1'
+    volumes: [chdata:/var/lib/clickhouse]
+    healthcheck: {test: [CMD-SHELL, 'clickhouse-client --user demand --password "$${CLICKHOUSE_PASSWORD}" --query "SELECT 1"'], interval: 5s, timeout: 5s, retries: 30}
+  minio:
+    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-demandflow}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-demandflow_local}
+    ports: ['127.0.0.1:9001:9001']
+    volumes: [s3data:/data]
+    healthcheck: {test: [CMD, curl, -f, http://localhost:9000/minio/health/live], interval: 5s, timeout: 5s, retries: 30}
+  mlflow:
+    build: .
+    user: '50000:0'
+    environment: *env
+    command: ['mlflow', 'server', '--host', '0.0.0.0', '--port', '5000', '--backend-store-uri', 'postgresql+psycopg2://demand:${POSTGRES_PASSWORD:-demand_local}@postgres:5432/mlflow', '--artifacts-destination', '/state/mlartifacts', '--workers', '1']
+    ports: ['127.0.0.1:5000:5000']
+    volumes: [state:/state]
+    depends_on:
+      postgres: {condition: service_healthy}
+      state-init: {condition: service_completed_successfully}
+    healthcheck: {test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"], interval: 10s, timeout: 5s, retries: 30}
+  api:
+    build: .
+    user: '50000:0'
+    environment: *env
+    ports: ['127.0.0.1:8000:8000']
+    volumes: [state:/state]
+    depends_on:
+      state-init: {condition: service_completed_successfully}
+  pipeline:
+    build: .
+    user: '50000:0'
+    profiles: [jobs]
+    environment: *env
+    volumes: [state:/state, './data:/data:ro']
+    command: [python, -m, demandflow.cli, run, --csv, /data/sales.csv, --full]
+    depends_on:
+      <<: *ready
+      state-init: {condition: service_completed_successfully}
+  airflow-init:
+    <<: *airflow
+    depends_on:
+      postgres: {condition: service_healthy}
+      state-init: {condition: service_completed_successfully}
+    command: [bash, -c, 'airflow db migrate && (airflow users list | grep -q admin || airflow users create --username admin --password admin_local --firstname Demo --lastname User --role Admin --email demo@example.com)']
+  airflow-web:
+    <<: *airflow
+    command: webserver
+    ports: ['127.0.0.1:8080:8080']
+    depends_on:
+      airflow-init: {condition: service_completed_successfully}
+  airflow-scheduler:
+    <<: *airflow
+    command: scheduler
+    depends_on:
+      <<: *ready
+      airflow-init: {condition: service_completed_successfully}
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    ports: ['127.0.0.1:9090:9090']
+    volumes: ['./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro', './infra/alerts.yml:/etc/prometheus/alerts.yml:ro']
+volumes:
+  state:
+  pgdata:
+  chdata:
+  s3data:
+  airflow_logs:
